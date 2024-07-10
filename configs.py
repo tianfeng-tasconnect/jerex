@@ -11,6 +11,8 @@ class DatasetsConfig:
     valid_path: str = MISSING
     # path to test dataset
     test_path: Optional[str] = None
+    # path to predict dataset
+    predict_path: Optional[str] = None
     # path to entity/relation type specifications
     types_path: str = MISSING
 
@@ -42,8 +44,8 @@ class ModelConfig:
     # reasonably high
     size_embeddings_count: int = 30
     ed_embeddings_count: int = 300
-    token_dist_embeddings_count: int = 700
-    sentence_dist_embeddings_count: int = 50
+    token_dist_embeddings_count: int = 3000
+    sentence_dist_embeddings_count: int = 100
 
     # size of position embedding layer
     position_embeddings_count: int = 700
@@ -115,6 +117,8 @@ class InferenceConfig:
     valid_batch_size: int = 1
     # batch size used during testing
     test_batch_size: int = 1
+    # batch size used during prediction
+    predict_batch_size: int = 1
     # maximum spans to process simultaneously during inference
     # only needed in case of insufficient memory
     max_spans: Optional[int] = None
@@ -146,6 +150,8 @@ class MiscConfig:
     store_predictions: bool = False
     # if true, store evaluation examples on disc (in log directory)
     store_examples: bool = False
+    # filename to store predictions on disc (can be an absolute path)
+    predictions_filename: str = 'predictions.json'
 
     # logging
     flush_logs_every_n_steps: int = 1000
@@ -223,6 +229,19 @@ class DatasetsTestConfig:
 @dataclass
 class TestConfig:
     dataset: DatasetsTestConfig = DatasetsTestConfig()
+    model: ModelTestConfig = ModelTestConfig()
+    inference: InferenceConfig = InferenceConfig()
+    distribution: DistributionConfig = DistributionConfig()
+    misc: MiscConfig = MiscConfig()
+
+@dataclass
+class DatasetsPredictConfig:
+    # path to predict dataset
+    predict_path: str = MISSING
+    
+@dataclass
+class PredictConfig:
+    dataset: DatasetsPredictConfig = DatasetsPredictConfig()
     model: ModelTestConfig = ModelTestConfig()
     inference: InferenceConfig = InferenceConfig()
     distribution: DistributionConfig = DistributionConfig()

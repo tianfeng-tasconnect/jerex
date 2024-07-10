@@ -1,7 +1,7 @@
 datasets:
-  train_path: ./data/datasets/docred_joint/train_joint.json
-  valid_path: ./data/datasets/docred_joint/dev_joint.json
-  types_path: ./data/datasets/docred_joint/types.json
+  train_path: /root/1-TianFeng/data/datasets/docred_joint/train_joint.json
+  valid_path: /root/1-TianFeng/data/datasets/docred_joint/dev_joint.json
+  types_path: /root/1-TianFeng/data/datasets/docred_joint/types.json
 
 model:
   model_type: joint_multi_instance
@@ -39,7 +39,7 @@ inference:
 
 distribution:
   gpus: []
-  accelerator: ''
+  accelerator: 'auto'
   prepare_data_per_node: false
 
 misc:
@@ -49,5 +49,5 @@ misc:
 
 hydra:
   run:
-    dir: ./data/runs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: /root/1-TianFeng/data/runs/${now:%Y-%m-%d}/${now:%H-%M-%S}
   output_subdir: run_config

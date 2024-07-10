@@ -1,7 +1,8 @@
 import os
 
 from abc import ABC, abstractmethod
-from transformers import BertTokenizer
+# from transformers import BertTokenizer
+from transformers import PreTrainedTokenizer
 from typing import List
 
 from jerex.entities import Document
@@ -10,7 +11,7 @@ SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 
 
 class Evaluator(ABC):
-    def __init__(self, entity_types: dict, relation_types: dict, tokenizer: BertTokenizer):
+    def __init__(self, entity_types: dict, relation_types: dict, tokenizer: PreTrainedTokenizer):
         self._entity_types = {v.index: v for v in entity_types.values()}
         self._relation_types = {v.index: v for v in relation_types.values()}
         self._tokenizer = tokenizer

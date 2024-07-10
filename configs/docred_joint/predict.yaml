@@ -1,5 +1,5 @@
 dataset:
-  test_path: /root/1-TianFeng/data/datasets/docred_joint/test_joint.json
+  predict_path: /root/1-TianFeng/test.json
 
 model:
   model_path: /root/1-TianFeng/data/models/docred_joint/joint_multi_instance/model.ckpt
@@ -11,7 +11,7 @@ inference:
 
 distribution:
   gpus: []
-  accelerator: ''
+  accelerator: 'auto'
   prepare_data_per_node: false
 
 hydra:

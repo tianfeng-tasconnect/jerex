@@ -8,9 +8,10 @@ import torch
 import transformers
 from pytorch_lightning import loggers
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from transformers import AdamW, BertConfig, BertTokenizer
+# from transformers import AdamW, BertConfig, BertTokenizer
+from transformers import AdamW, AutoConfig, AutoTokenizer
 
-from configs import TrainConfig, TestConfig
+from configs import TrainConfig, TestConfig, PredictConfig
 from jerex import models, util
 from jerex.data_module import DocREDDataModule
 
@@ -46,11 +47,12 @@ class JEREXModel(pl.LightningModule):
 
         model_class = models.get_model(model_type)
 
-        self._tokenizer = BertTokenizer.from_pretrained(tokenizer_path,
+        self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_path,
                                                         do_lower_case=lowercase,
-                                                        cache_dir=cache_path)
+                                                        cache_dir=cache_path,
+                                                        use_fast=False)
 
-        self._encoder_config = BertConfig.from_pretrained(encoder_config_path or encoder_path, cache_dir=cache_path)
+        self._encoder_config = AutoConfig.from_pretrained(encoder_config_path or encoder_path, cache_dir=cache_path, add_pooling_layers=False)
 
         self.model = models.create_model(model_class, encoder_config=self._encoder_config, tokenizer=self._tokenizer,
                                          encoder_path=encoder_path, entity_types=entity_types,
@@ -85,6 +87,7 @@ class JEREXModel(pl.LightningModule):
         # evaluation
         self._eval_valid_gt = None  # validation datasets converted for evaluation
         self._eval_test_gt = None  # test datasets converted for evaluation
+        self._eval_predict_gt = None # predict datasets converted - dummy
         self._examples_filename = examples_filename
         self._predictions_filename = predictions_filename
         self._tmp_predictions_filename = tmp_predictions_filename
@@ -96,6 +99,8 @@ class JEREXModel(pl.LightningModule):
             self._eval_valid_gt = self._evaluator.convert_gt(self.trainer.datamodule.valid_dataset.documents)
         elif stage == 'test':
             self._eval_test_gt = self._evaluator.convert_gt(self.trainer.datamodule.test_dataset.documents)
+        elif stage == 'predict':
+            self._eval_predict_gt = self._evaluator.convert_gt(self.trainer.datamodule.predict_dataset.documents)
 
     def forward(self, inference=False, **batch):
         max_spans = self._max_spans_train if not inference else self._max_spans_inference
@@ -125,7 +130,7 @@ class JEREXModel(pl.LightningModule):
         # validation is run after every epoch (default)
         return self._inference(batch, batch_idx)
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         """ Loads current epoch's validation set predictions from disk and computes validation metrics """
         # this method is called by PL after all validation steps have finished
         if self._do_eval():
@@ -134,11 +139,13 @@ class JEREXModel(pl.LightningModule):
 
             # this metric is used to store the best model over epochs and later use it for testing
             score = metrics[self.model.MONITOR_METRIC[0]][self.model.MONITOR_METRIC[1]]
-            self.log('valid_f1', score, sync_dist=self.trainer.use_ddp, sync_dist_op='max')
+            # self.log('valid_f1', score, sync_dist=self.trainer.use_ddp, sync_dist_op='max')
+            self.log('valid_f1', score, sync_dist=True, reduce_fx='max')
 
             self._delete_predictions()
         else:
-            self.log('valid_f1', 0, sync_dist=self.trainer.use_ddp, sync_dist_op='max')
+            # self.log('valid_f1', 0, sync_dist=self.trainer.use_ddp, sync_dist_op='max')
+            self.log('valid_f1', 0, sync_dist=True, reduce_fx='max')
 
         self._barrier()
 
@@ -146,7 +153,7 @@ class JEREXModel(pl.LightningModule):
         """ Implements a test step, i.e. evaluation of test dataset against ground truth """
         return self._inference(batch, batch_idx)
 
-    def test_epoch_end(self, outputs):
+    def on_test_epoch_end(self):
         """ Loads current epoch's test set predictions from disk and computes test metrics """
         if self._do_eval():
             predictions = self._load_predictions()
@@ -157,7 +164,8 @@ class JEREXModel(pl.LightningModule):
             # log metrics
             for task, metrics in metrics.items():
                 for metric_name, metric_value in metrics.items():
-                    self.log(f'{task}_{metric_name}', metric_value)
+                    # self.log(f'{task}_{metric_name}', metric_value, sync_dist=True, sync_dist_op='max')
+                    self.log(f'{task}_{metric_name}', metric_value, sync_dist=True, reduce_fx='max')
 
             if self._store_examples:
                 docs = self.trainer.datamodule.test_dataset.documents
@@ -171,6 +179,27 @@ class JEREXModel(pl.LightningModule):
 
         self._barrier()
 
+    def predict_step(self, batch, batch_idx):
+        """ Implements a predict step """
+        return self._inference(batch, batch_idx)
+
+    def on_predict_epoch_end(self):
+        """ Loads current epoch's predict set predictions from disk """
+        if self._do_eval():
+            predictions = self._load_predictions()
+
+            if self._store_examples:
+                docs = self.trainer.datamodule.predict_dataset.documents
+                self._evaluator.store_examples(self._eval_predict_gt, predictions, docs, self._examples_filename)
+
+            if self._store_predicitons:
+                docs = self.trainer.datamodule.predict_dataset.documents
+                self._evaluator.store_predictions(predictions, docs, self._predictions_filename)
+
+            self._delete_predictions()
+
+        self._barrier()
+        
     def _inference(self, batch, batch_index):
         """ Converts prediction results of an epoch and stores the predictions on disk for later evaluation"""
         output = self(**batch, inference=True)
@@ -184,24 +213,36 @@ class JEREXModel(pl.LightningModule):
                 res = dict(doc_id=doc_id.item(), predictions=doc_predictions)
                 with open(self._tmp_predictions_filename, 'ab+') as fp:
                     pickle.dump(res, fp)
-
+        
     def configure_optimizers(self):
         """ Created and configures optimizer and learning rate schedule """
         # this method is called once by PL before training starts
         optimizer_params = self._get_optimizer_params()
-        optimizer = AdamW(optimizer_params, lr=self._lr, weight_decay=self._weight_decay)
-
-        dataloader = self.train_dataloader()
-        train_batch_count = len(dataloader)
-
-        gpu_dist = self.trainer.num_gpus if self.trainer.use_ddp else 1
-        updates_epoch = train_batch_count // (gpu_dist * self.trainer.accumulate_grad_batches)
-        updates_total = updates_epoch * self.trainer.max_epochs
-
+        optimizer = torch.optim.Adam(optimizer_params, lr=self._lr, weight_decay=self._weight_decay)
+        
         scheduler = transformers.get_linear_schedule_with_warmup(optimizer,
-                                                                 num_warmup_steps=int(self._lr_warmup * updates_total),
-                                                                 num_training_steps=updates_total)
+                                                                 num_warmup_steps=int(self._lr_warmup * self.trainer.estimated_stepping_batches),
+                                                                 num_training_steps=self.trainer.estimated_stepping_batches)
         return [optimizer], [{'scheduler': scheduler, 'name': 'learning_rate', 'interval': 'step', 'frequency': 1}]
+    
+#     def configure_optimizers(self):
+#         """ Created and configures optimizer and learning rate schedule """
+#         # this method is called once by PL before training starts
+#         optimizer_params = self._get_optimizer_params()
+#         optimizer = AdamW(optimizer_params, lr=self._lr, weight_decay=self._weight_decay)
+
+#         dataloader = self.train_dataloader()
+#         train_batch_count = len(dataloader)
+
+#         # gpu_dist = self.trainer.num_gpus if self.trainer.use_ddp else 1
+#         gpu_dist = self.trainer.num_gpus
+#         updates_epoch = train_batch_count // (gpu_dist * self.trainer.accumulate_grad_batches)
+#         updates_total = updates_epoch * self.trainer.max_epochs
+
+#         scheduler = transformers.get_linear_schedule_with_warmup(optimizer,
+#                                                                  num_warmup_steps=int(self._lr_warmup * updates_total),
+#                                                                  num_training_steps=updates_total)
+#         return [optimizer], [{'scheduler': scheduler, 'name': 'learning_rate', 'interval': 'step', 'frequency': 1}]
 
     def save_tokenizer(self, path):
         """ Saves tokenizer do disk """
@@ -236,7 +277,8 @@ class JEREXModel(pl.LightningModule):
 
     def _barrier(self):
         """ When using ddp as accelerator, lets processes wait till all processes passed barrier """
-        if self.trainer.use_ddp:
+        # if self.trainer.use_ddp:
+        if torch.distributed.group.WORLD is not None:
             torch.distributed.barrier(torch.distributed.group.WORLD)
 
     def _load_predictions(self):
@@ -268,8 +310,8 @@ def train(cfg: TrainConfig):
 
     model_class = models.get_model(cfg.model.model_type)
 
-    tokenizer = BertTokenizer.from_pretrained(cfg.model.tokenizer_path, do_lower_case=cfg.sampling.lowercase,
-                                              cache_dir=cfg.misc.cache_path)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_path, do_lower_case=cfg.sampling.lowercase,
+                                              cache_dir=cfg.misc.cache_path, use_fast=False)
 
     # read datasets
     data_module = DocREDDataModule(types_path=cfg.datasets.types_path, tokenizer=tokenizer,
@@ -318,24 +360,27 @@ def train(cfg: TrainConfig):
                        max_span_size=cfg.sampling.max_span_size)
 
     checkpoint_path = 'checkpoint'
-    checkpoint_callback = ModelCheckpoint(dirpath=checkpoint_path, mode='max', monitor='valid_f1')
+    val_checkpoint = ModelCheckpoint(dirpath=checkpoint_path, mode='max', monitor='valid_f1')
+    latest_checkpoint = ModelCheckpoint(dirpath=checkpoint_path + '/epoch_end', mode='max', monitor='epoch', save_on_train_epoch_end=True, save_top_k=1)
     model.save_tokenizer(checkpoint_path)
     model.save_encoder_config(checkpoint_path)
 
     tb_logger = pl.loggers.TensorBoardLogger('.', 'tb')
     csv_logger = pl.loggers.CSVLogger('.', 'csv')
 
-    trainer = pl.Trainer(callbacks=[checkpoint_callback, LearningRateMonitor(logging_interval='step')],
+    trainer = pl.Trainer(callbacks=[val_checkpoint, latest_checkpoint, LearningRateMonitor(logging_interval='step')],
                          min_epochs=cfg.training.min_epochs, max_epochs=cfg.training.max_epochs,
                          logger=[tb_logger, csv_logger],
                          profiler=cfg.misc.profiler, gradient_clip_val=cfg.training.max_grad_norm,
-                         gpus=cfg.distribution.gpus if cfg.distribution.gpus else None,
-                         accelerator=cfg.distribution.accelerator, precision=cfg.misc.precision,
-                         flush_logs_every_n_steps=cfg.misc.flush_logs_every_n_steps,
+                         # gpus=cfg.distribution.gpus if cfg.distribution.gpus else None,
+                         accelerator=cfg.distribution.accelerator, 
+                         strategy='ddp_find_unused_parameters_true',
+                         precision=cfg.misc.precision,
+                         # flush_logs_every_n_steps=cfg.misc.flush_logs_every_n_steps,
                          log_every_n_steps=cfg.misc.log_every_n_steps,
                          deterministic=cfg.misc.deterministic,
                          accumulate_grad_batches=cfg.training.accumulate_grad_batches,
-                         prepare_data_per_node=cfg.distribution.prepare_data_per_node,
+                         # prepare_data_per_node=cfg.distribution.prepare_data_per_node,
                          num_sanity_val_steps=0)
 
     trainer.fit(model, datamodule=data_module)
@@ -361,9 +406,10 @@ def test(cfg: TestConfig):
                                             max_rel_pairs_inference=cfg.inference.max_rel_pairs,
                                             encoder_path=None, **overrides)
 
-    tokenizer = BertTokenizer.from_pretrained(cfg.model.tokenizer_path,
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_path,
                                               do_lower_case=model.hparams.lowercase,
-                                              cache_dir=model.hparams.cache_path)
+                                              cache_dir=model.hparams.cache_path,
+                                              use_fast=False)
 
     # read datasets
     model_class = models.get_model(model.hparams.model_type)
@@ -378,12 +424,63 @@ def test(cfg: TestConfig):
     csv_logger = pl.loggers.CSVLogger('.', 'cv')
 
     trainer = pl.Trainer(logger=[tb_logger, csv_logger],
-                         profiler="simple", gpus=cfg.distribution.gpus if cfg.distribution.gpus else None,
-                         accelerator=cfg.distribution.accelerator, precision=cfg.misc.precision,
-                         flush_logs_every_n_steps=cfg.misc.flush_logs_every_n_steps,
+                         profiler="simple", 
+                         # gpus=cfg.distribution.gpus if cfg.distribution.gpus else None,
+                         accelerator=cfg.distribution.accelerator, 
+                         # accelerator='auto',
+                         precision=cfg.misc.precision,
+                         # flush_logs_every_n_steps=cfg.misc.flush_logs_every_n_steps,
                          log_every_n_steps=cfg.misc.log_every_n_steps,
-                         prepare_data_per_node=cfg.distribution.prepare_data_per_node)
+                         # prepare_data_per_node=cfg.distribution.prepare_data_per_node
+                        )
 
     # test
     data_module.setup('test')
     trainer.test(model, datamodule=data_module)
+
+def predict(cfg: PredictConfig):
+    """ Loads predict dataset and model and creates trainer for JEREX prediction """
+    overrides = util.get_overrides_dict(mention_threshold=cfg.model.mention_threshold,
+                                        coref_threshold=cfg.model.coref_threshold,
+                                        rel_threshold=cfg.model.rel_threshold,
+                                        cache_path=cfg.misc.cache_path,
+                                        predictions_filename=cfg.misc.predictions_filename)
+    model = JEREXModel.load_from_checkpoint(cfg.model.model_path,
+                                            tokenizer_path=cfg.model.tokenizer_path,
+                                            encoder_config_path=cfg.model.encoder_config_path,
+                                            max_spans_inference=cfg.inference.max_spans,
+                                            max_coref_pairs_inference=cfg.inference.max_coref_pairs,
+                                            max_rel_pairs_inference=cfg.inference.max_rel_pairs,
+                                            encoder_path=None, **overrides)
+
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_path,
+                                              do_lower_case=model.hparams.lowercase,
+                                              cache_dir=model.hparams.cache_path,
+                                              use_fast=False)
+
+    # read datasets
+    model_class = models.get_model(model.hparams.model_type)
+    data_module = DocREDDataModule(entity_types=model.hparams.entity_types,
+                                   relation_types=model.hparams.relation_types,
+                                   tokenizer=tokenizer, task_type=model_class.TASK_TYPE,
+                                   predict_path=cfg.dataset.predict_path,
+                                   predict_batch_size=cfg.inference.predict_batch_size,
+                                   max_span_size=model.hparams.max_span_size)
+
+    tb_logger = pl.loggers.TensorBoardLogger('.', 'tb')
+    csv_logger = pl.loggers.CSVLogger('.', 'cv')
+
+    trainer = pl.Trainer(logger=[tb_logger, csv_logger],
+                         profiler="simple", 
+                         # gpus=cfg.distribution.gpus if cfg.distribution.gpus else None,
+                         # accelerator=cfg.distribution.accelerator, 
+                         accelerator='auto',
+                         precision=cfg.misc.precision,
+                         # flush_logs_every_n_steps=cfg.misc.flush_logs_every_n_steps,
+                         log_every_n_steps=cfg.misc.log_every_n_steps,
+                         # prepare_data_per_node=cfg.distribution.prepare_data_per_node
+                        )
+
+    # predict
+    data_module.setup('predict')
+    trainer.predict(model, datamodule=data_module)

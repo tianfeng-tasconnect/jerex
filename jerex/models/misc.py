@@ -132,7 +132,7 @@ def create_clusters(coref_clf: torch.tensor, mention_pairs: torch.tensor, pair_s
             distances = 1 - similarities
 
             # apply complete linkage clustering
-            agg_clustering = AgglomerativeClustering(n_clusters=None, affinity='precomputed',
+            agg_clustering = AgglomerativeClustering(n_clusters=None, metric='precomputed',
                                                      linkage='complete', distance_threshold=1 - threshold)
             assignments = agg_clustering.fit_predict(distances)
 

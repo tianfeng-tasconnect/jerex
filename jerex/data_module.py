@@ -3,7 +3,8 @@ from collections import OrderedDict
 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
-from transformers import BertTokenizer
+# from transformers import BertTokenizer
+from transformers import PreTrainedTokenizer
 
 from jerex.datasets import DocREDDataset
 from jerex.entities import EntityType, RelationType
@@ -12,10 +13,10 @@ from jerex.sampling.sampling_common import collate_fn_padding
 
 class DocREDDataModule(pl.LightningDataModule):
     """ Reads entity/relation type specification and manages datasets for training/validation/testing"""
-    def __init__(self, tokenizer: BertTokenizer, task_type: str, types_path: str = None,
-                 train_path: str = None, valid_path: str = None, test_path: str = None,
+    def __init__(self, tokenizer: PreTrainedTokenizer, task_type: str, types_path: str = None,
+                 train_path: str = None, valid_path: str = None, test_path: str = None, predict_path: str = None,
                  entity_types: dict = None, relation_types: dict = None,
-                 train_batch_size: int = 1, valid_batch_size: int = 1, test_batch_size: int = 1,
+                 train_batch_size: int = 1, valid_batch_size: int = 1, test_batch_size: int = 1, predict_batch_size: int = 1,
                  sampling_processes: int = 4, neg_mention_count: int = 50,
                  neg_relation_count: int = 50, neg_coref_count: int = 50,
                  max_span_size: int = 10, neg_mention_overlap_ratio: float = 0.5,
@@ -50,6 +51,7 @@ class DocREDDataModule(pl.LightningDataModule):
         self._train_batch_size = train_batch_size
         self._valid_batch_size = valid_batch_size
         self._test_batch_size = test_batch_size
+        self._predict_batch_size = predict_batch_size
         self._sampling_processes = sampling_processes
         self._neg_mention_count = neg_mention_count
         self._neg_relation_count = neg_relation_count
@@ -60,10 +62,12 @@ class DocREDDataModule(pl.LightningDataModule):
         self._train_path = train_path
         self._valid_path = valid_path
         self._test_path = test_path
+        self._predict_path = predict_path
 
         self._train_dataset = None
         self._valid_dataset = None
         self._test_dataset = None
+        self._predict_dataset = None
 
         self._final_valid_evaluate = final_valid_evaluate
 
@@ -110,6 +114,17 @@ class DocREDDataModule(pl.LightningDataModule):
 
             self._test_dataset.switch_task(self._task_type)
             self._test_dataset.switch_mode(DocREDDataset.INFERENCE_MODE)
+            
+        if stage == 'predict':
+            if self._predict_path is not None:
+                self._predict_dataset = DocREDDataset(dataset_path=self._predict_path, 
+                                                      entity_types=self._entity_types,
+                                                      relation_types=self._relation_types,
+                                                      max_span_size=self._max_span_size,
+                                                      tokenizer=self._tokenizer)
+
+                self._predict_dataset.switch_task(self._task_type)
+                self._predict_dataset.switch_mode(DocREDDataset.INFERENCE_MODE)
 
     def train_dataloader(self):
         return DataLoader(self._train_dataset, batch_size=self._train_batch_size, shuffle=True, drop_last=True,
@@ -125,6 +140,11 @@ class DocREDDataModule(pl.LightningDataModule):
         return DataLoader(self._test_dataset, batch_size=self._test_batch_size, shuffle=False, drop_last=False,
                           num_workers=self._sampling_processes,
                           collate_fn=collate_fn_padding)
+    
+    def predict_dataloader(self):
+        return DataLoader(self._predict_dataset, batch_size=self._predict_batch_size, shuffle=False, drop_last=False, 
+                          num_workers=self._sampling_processes,
+                          collate_fn=collate_fn_padding)
 
     @property
     def train_dataset(self):
@@ -138,6 +158,10 @@ class DocREDDataModule(pl.LightningDataModule):
     def test_dataset(self):
         return self._test_dataset
 
+    @property
+    def predict_dataset(self):
+        return self._predict_dataset
+    
     @property
     def entity_types(self):
         return self._entity_types

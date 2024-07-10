@@ -1,7 +1,8 @@
 import torch
-from transformers import BertConfig
-from transformers import BertModel
-from transformers import BertPreTrainedModel
+# from transformers import BertConfig
+# from transformers import BertModel
+# from transformers import BertPreTrainedModel
+from transformers import AutoModel, PreTrainedModel, PretrainedConfig
 
 from jerex import util
 from jerex.evaluation.classification_evaluator import MentionLocalizationEvaluator, RelClassificationEvaluator, \
@@ -20,7 +21,7 @@ from jerex.models.modules.relation_classification_global import RelationClassifi
 from jerex.models.modules.relation_classification_multi_instance import RelationClassificationMultiInstance
 
 
-class MentionLocalizationModel(BertPreTrainedModel):
+class MentionLocalizationModel(PreTrainedModel):
     """ Mention localization model """
 
     TASK_TYPE = TaskType.MENTION_LOCALIZATION
@@ -28,12 +29,12 @@ class MentionLocalizationModel(BertPreTrainedModel):
     EVALUATOR = MentionLocalizationEvaluator
     MONITOR_METRIC = ('mention', 'f1_micro')
 
-    def __init__(self, config: BertConfig,
+    def __init__(self, config: PretrainedConfig,
                  meta_embedding_size: int, size_embeddings_count: int, prop_drop: float,
                  mention_threshold: float, *args, **kwargs):
         super(MentionLocalizationModel, self).__init__(config)
 
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.base_model = AutoModel.from_config(config, add_pooling_layer=False)
 
         self.mention_representation = MentionRepresentation()
         self.mention_localization = MentionLocalization(config.hidden_size, meta_embedding_size,
@@ -50,7 +51,7 @@ class MentionLocalizationModel(BertPreTrainedModel):
         context_masks = context_masks.float()
         mention_masks = mention_masks.float()
 
-        h = self.bert(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
+        h = self.base_model(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
         mention_reprs = self.mention_representation(h, mention_masks, max_spans=max_spans)
         mention_clf = self.mention_localization(mention_reprs, mention_sizes)
 
@@ -62,7 +63,7 @@ class MentionLocalizationModel(BertPreTrainedModel):
         return dict(mention_clf=mention_clf)
 
 
-class CoreferenceResolutionModel(BertPreTrainedModel):
+class CoreferenceResolutionModel(PreTrainedModel):
     """ Coreference resolution model """
 
     TASK_TYPE = TaskType.COREFERENCE_RESOLUTION
@@ -70,11 +71,11 @@ class CoreferenceResolutionModel(BertPreTrainedModel):
     EVALUATOR = CoreferenceResolutionEvaluator
     MONITOR_METRIC = ('coref', 'f1_micro')
 
-    def __init__(self, config: BertConfig,
+    def __init__(self, config: PretrainedConfig,
                  meta_embedding_size: int, ed_embeddings_count: int, prop_drop: float, coref_threshold: float, *args, **kwargs):
         super(CoreferenceResolutionModel, self).__init__(config)
 
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.base_model = AutoModel.from_config(config, add_pooling_layer=False)
 
         self.mention_representation = MentionRepresentation()
         self.coreference_resolution = CoreferenceResolution(config.hidden_size, meta_embedding_size,
@@ -93,7 +94,7 @@ class CoreferenceResolutionModel(BertPreTrainedModel):
         mention_masks = mention_masks.float()
         coref_sample_masks = coref_sample_masks.float()
 
-        h = self.bert(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
+        h = self.base_model(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
         mention_reprs = self.mention_representation(h, mention_masks, max_spans=max_spans)
 
         coref_clf = self.coreference_resolution(mention_reprs, coref_mention_pairs, coref_eds, max_pairs=max_coref_pairs)
@@ -115,7 +116,7 @@ class CoreferenceResolutionModel(BertPreTrainedModel):
         return dict(coref_clf=coref_clf)
 
 
-class EntityClassificationModel(BertPreTrainedModel):
+class EntityClassificationModel(PreTrainedModel):
     """ DocRED Classification model """
 
     TASK_TYPE = TaskType.ENTITY_CLASSIFICATION
@@ -123,11 +124,11 @@ class EntityClassificationModel(BertPreTrainedModel):
     EVALUATOR = EntityClassificationEvaluator
     MONITOR_METRIC = ('entity', 'f1_micro')
 
-    def __init__(self, config: BertConfig, prop_drop: float, entity_types: int, *args, **kwargs):
+    def __init__(self, config: PretrainedConfig, prop_drop: float, entity_types: int, *args, **kwargs):
         super(EntityClassificationModel, self).__init__(config)
 
         # Transformer model
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.base_model = AutoModel.from_config(config, add_pooling_layer=False)
 
         self.mention_representation = MentionRepresentation()
 
@@ -143,7 +144,7 @@ class EntityClassificationModel(BertPreTrainedModel):
         context_masks = context_masks.float()
         mention_masks = mention_masks.float()
 
-        h = self.bert(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
+        h = self.base_model(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
         mention_reprs = self.mention_representation(h, mention_masks, max_spans=max_spans)
 
         entity_reprs = self.entity_representation(mention_reprs, entities, entity_masks)
@@ -156,7 +157,7 @@ class EntityClassificationModel(BertPreTrainedModel):
         return dict(entity_clf=entity_clf)
 
 
-class RelClassificationMultiInstanceModel(BertPreTrainedModel):
+class RelClassificationMultiInstanceModel(PreTrainedModel):
     """ Relation classification model using a multi-instance approach """
 
     TASK_TYPE = TaskType.RELATION_CLASSIFICATION
@@ -164,14 +165,14 @@ class RelClassificationMultiInstanceModel(BertPreTrainedModel):
     EVALUATOR = RelClassificationEvaluator
     MONITOR_METRIC = ('rel', 'f1_micro')
 
-    def __init__(self, config: BertConfig, relation_types: int, entity_types: int, meta_embedding_size: int,
+    def __init__(self, config: PretrainedConfig, relation_types: int, entity_types: int, meta_embedding_size: int,
                  token_dist_embeddings_count: int,
                  sentence_dist_embeddings_count: int,
                  prop_drop: float, rel_threshold: float, *args, **kwargs):
         super(RelClassificationMultiInstanceModel, self).__init__(config)
 
         # Transformer model
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.base_model = AutoModel.from_config(config, add_pooling_layer=False)
 
         self.mention_representation = MentionRepresentation()
         self.entity_representation = EntityRepresentation(prop_drop)
@@ -199,7 +200,7 @@ class RelClassificationMultiInstanceModel(BertPreTrainedModel):
         mention_masks = mention_masks.float()
         entity_masks = entity_masks.float()
 
-        h = self.bert(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
+        h = self.base_model(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
         mention_reprs = self.mention_representation(h, mention_masks, max_spans=max_spans)
         entity_reprs = self.entity_representation(mention_reprs, entities, entity_masks)
         entity_pair_reprs = self.entity_pair_representation(entity_reprs, rel_entity_pairs)
@@ -219,7 +220,7 @@ class RelClassificationMultiInstanceModel(BertPreTrainedModel):
         return dict(rel_clf=rel_clf)
 
 
-class RelClassificationGlobal(BertPreTrainedModel):
+class RelClassificationGlobal(PreTrainedModel):
     """ Relation classification model using global entity representations """
 
     TASK_TYPE = TaskType.RELATION_CLASSIFICATION
@@ -227,11 +228,11 @@ class RelClassificationGlobal(BertPreTrainedModel):
     EVALUATOR = RelClassificationEvaluator
     MONITOR_METRIC = ('rel', 'f1_micro')
 
-    def __init__(self, config: BertConfig, relation_types: int, entity_types: int, meta_embedding_size: int,
+    def __init__(self, config: PretrainedConfig, relation_types: int, entity_types: int, meta_embedding_size: int,
                  prop_drop: float, rel_threshold, *args, **kwargs):
         super(RelClassificationGlobal, self).__init__(config)
 
-        self.bert = BertModel(config, add_pooling_layer=False)
+        self.base_model = AutoModel.from_config(config, add_pooling_layer=False)
 
         self.mention_representation = MentionRepresentation()
         self.entity_representation = EntityRepresentation(prop_drop)
@@ -253,7 +254,7 @@ class RelClassificationGlobal(BertPreTrainedModel):
         mention_masks = mention_masks.float()
         entity_masks = entity_masks.float()
 
-        h = self.bert(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
+        h = self.base_model(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
         mention_reprs = self.mention_representation(h, mention_masks, max_spans=max_spans)
         entity_reprs = self.entity_representation(mention_reprs, entities, entity_masks)
 
