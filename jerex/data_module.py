@@ -3,8 +3,7 @@ from collections import OrderedDict
 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
-# from transformers import BertTokenizer
-from transformers import PreTrainedTokenizer
+from transformers import BertTokenizer
 
 from jerex.datasets import DocREDDataset
 from jerex.entities import EntityType, RelationType
@@ -13,7 +12,7 @@ from jerex.sampling.sampling_common import collate_fn_padding
 
 class DocREDDataModule(pl.LightningDataModule):
     """ Reads entity/relation type specification and manages datasets for training/validation/testing"""
-    def __init__(self, tokenizer: PreTrainedTokenizer, task_type: str, types_path: str = None,
+    def __init__(self, tokenizer: BertTokenizer, task_type: str, types_path: str = None,
                  train_path: str = None, valid_path: str = None, test_path: str = None, predict_path: str = None,
                  entity_types: dict = None, relation_types: dict = None,
                  train_batch_size: int = 1, valid_batch_size: int = 1, test_batch_size: int = 1, predict_batch_size: int = 1,

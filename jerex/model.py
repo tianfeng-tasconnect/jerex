@@ -8,8 +8,7 @@ import torch
 import transformers
 from pytorch_lightning import loggers
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-# from transformers import AdamW, BertConfig, BertTokenizer
-from transformers import AdamW, AutoConfig, AutoTokenizer
+from transformers import AdamW, BertConfig, BertTokenizer
 
 from configs import TrainConfig, TestConfig, PredictConfig
 from jerex import models, util
@@ -47,12 +46,11 @@ class JEREXModel(pl.LightningModule):
 
         model_class = models.get_model(model_type)
 
-        self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_path,
+        self._tokenizer = BertTokenizer.from_pretrained(tokenizer_path,
                                                         do_lower_case=lowercase,
-                                                        cache_dir=cache_path,
-                                                        use_fast=False)
+                                                        cache_dir=cache_path)
 
-        self._encoder_config = AutoConfig.from_pretrained(encoder_config_path or encoder_path, cache_dir=cache_path, add_pooling_layers=False)
+        self._encoder_config = BertConfig.from_pretrained(encoder_config_path or encoder_path, cache_dir=cache_path)
 
         self.model = models.create_model(model_class, encoder_config=self._encoder_config, tokenizer=self._tokenizer,
                                          encoder_path=encoder_path, entity_types=entity_types,
@@ -310,7 +308,7 @@ def train(cfg: TrainConfig):
 
     model_class = models.get_model(cfg.model.model_type)
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_path, do_lower_case=cfg.sampling.lowercase,
+    tokenizer = BertTokenizer.from_pretrained(cfg.model.tokenizer_path, do_lower_case=cfg.sampling.lowercase,
                                               cache_dir=cfg.misc.cache_path, use_fast=False)
 
     # read datasets
@@ -406,7 +404,7 @@ def test(cfg: TestConfig):
                                             max_rel_pairs_inference=cfg.inference.max_rel_pairs,
                                             encoder_path=None, **overrides)
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_path,
+    tokenizer = BertTokenizer.from_pretrained(cfg.model.tokenizer_path,
                                               do_lower_case=model.hparams.lowercase,
                                               cache_dir=model.hparams.cache_path,
                                               use_fast=False)
@@ -453,7 +451,7 @@ def predict(cfg: PredictConfig):
                                             max_rel_pairs_inference=cfg.inference.max_rel_pairs,
                                             encoder_path=None, **overrides)
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_path,
+    tokenizer = BertTokenizer.from_pretrained(cfg.model.tokenizer_path,
                                               do_lower_case=model.hparams.lowercase,
                                               cache_dir=model.hparams.cache_path,
                                               use_fast=False)

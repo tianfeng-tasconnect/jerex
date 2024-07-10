@@ -1,10 +1,9 @@
 from abc import abstractmethod
 
 import torch
-# from transformers import BertConfig, BertTokenizer
-# from transformers import BertModel
-# from transformers import BertPreTrainedModel
-from transformers import AutoModel, PreTrainedModel, PreTrainedTokenizer, PretrainedConfig
+from transformers import BertConfig, BertTokenizer
+from transformers import BertModel
+from transformers import BertPreTrainedModel
 
 from jerex import util
 from jerex.evaluation.joint_evaluator import JointEvaluator
@@ -21,22 +20,17 @@ from jerex.models.modules.relation_classification_global import RelationClassifi
 from jerex.models.modules.relation_classification_multi_instance import RelationClassificationMultiInstance
 
 
-class JointBaseModel(PreTrainedModel):
+class JointBaseModel(BertPreTrainedModel):
     """ Base model of joint multi-instance and joint global models """
 
-    def __init__(self, encoder_path, config: PretrainedConfig, relation_types: int, entity_types: int,
+    def __init__(self, config: BertConfig, relation_types: int, entity_types: int,
                  meta_embedding_size: int, size_embeddings_count: int, ed_embeddings_count: int, prop_drop: float,
                  mention_threshold, coref_threshold, rel_threshold, tokenizer, *args, **kwargs):
         super(JointBaseModel, self).__init__(config)
 
         # Transformer model
-        # self.bert = BertModel(config, add_pooling_layer=False)
-        if encoder_path is not None:
-            self.trans_model = AutoModel.from_pretrained(encoder_path, config)
-        else:
-            self.trans_model = AutoModel.from_config(config)
-        
-        
+        self.bert = BertModel(config, add_pooling_layer=False)
+
         self.mention_representation = MentionRepresentation()
         self.mention_localization = MentionLocalization(config.hidden_size, meta_embedding_size,
                                                         size_embeddings_count, prop_drop)
@@ -60,7 +54,7 @@ class JointBaseModel(PreTrainedModel):
         mention_masks = mention_masks.float()
         entity_masks = entity_masks.float()
 
-        h = self.trans_model(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
+        h = self.bert(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
         mention_reprs = self.mention_representation(h, mention_masks, max_spans=max_spans)
         entity_reprs = self.entity_representation(mention_reprs, entities, entity_masks)
 
@@ -81,7 +75,7 @@ class JointBaseModel(PreTrainedModel):
         mention_sample_masks = mention_sample_masks.float()
 
         # embed documents
-        h = self.trans_model(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
+        h = self.bert(input_ids=encodings, attention_mask=context_masks)['last_hidden_state']
 
         # get mention representations
         mention_reprs = self.mention_representation(h, mention_masks, max_spans=max_spans)
@@ -159,12 +153,12 @@ class JointMultiInstanceModel(JointBaseModel):
     MONITOR_METRIC = ('rel_nec', 'f1_micro')
     EVALUATOR = JointEvaluator
 
-    def __init__(self, encoder_path, config: PretrainedConfig, relation_types: int, entity_types: int,
+    def __init__(self, config: BertConfig, relation_types: int, entity_types: int,
                  meta_embedding_size: int, size_embeddings_count: int, ed_embeddings_count: int,
                  token_dist_embeddings_count: int, sentence_dist_embeddings_count: int, prop_drop: float,
-                 mention_threshold: float, coref_threshold: float, rel_threshold: float, tokenizer: PreTrainedTokenizer,
+                 mention_threshold: float, coref_threshold: float, rel_threshold: float, tokenizer: BertTokenizer,
                  *args, **kwargs):
-        super(JointMultiInstanceModel, self).__init__(encoder_path, config, relation_types, entity_types,
+        super(JointMultiInstanceModel, self).__init__(config, relation_types, entity_types,
                                                       meta_embedding_size, size_embeddings_count, ed_embeddings_count,
                                                       prop_drop,
                                                       mention_threshold, coref_threshold, rel_threshold, tokenizer)
@@ -259,11 +253,11 @@ class JointGlobalModel(JointBaseModel):
     MONITOR_METRIC = ('rel_nec', 'f1_micro')
     EVALUATOR = JointEvaluator
 
-    def __init__(self, encoder_path, config: PretrainedConfig, relation_types: int, entity_types: int,
+    def __init__(self, config: BertConfig, relation_types: int, entity_types: int,
                  meta_embedding_size: int, size_embeddings_count: int,
                  ed_embeddings_count: int, prop_drop: float,
                  mention_threshold, coref_threshold, rel_threshold, tokenizer, *args, **kwargs):
-        super(JointGlobalModel, self).__init__(encoder_path, config, relation_types, entity_types,
+        super(JointGlobalModel, self).__init__(config, relation_types, entity_types,
                                                meta_embedding_size, size_embeddings_count, ed_embeddings_count,
                                                prop_drop, mention_threshold, coref_threshold,
                                                rel_threshold, tokenizer)
